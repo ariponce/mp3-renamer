@@ -1,0 +1,8 @@
+[package]
+name = "mp3-renamer"
+version = "0.1.0"
+authors = ["ariponce <aponce@protonmail.com>"]
+
+[dependencies]
+id3 = "0.1.10"
+getopts = "0.2.14"
