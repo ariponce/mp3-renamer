@@ -9,7 +9,7 @@ use id3::Tag;
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.len() <= 1 {
-        println!("Error: Not enough arguments");
+        println!("No files were provided");
         return;
     }
 
@@ -45,22 +45,35 @@ fn main() {
 }
 
 fn parse_dir(path: &Path) {
-    // TODO: implement this
+    for entry in fs::read_dir(path).unwrap() {
+        let path = entry.unwrap().path();
+        match parse_file(path.as_path()) {
+            Ok(_) => println!("Processed {:?}", path.file_name().unwrap()),
+            Err(e) => println!("Failed to process {:?}: {}", path.file_name().unwrap(), e)
+        }
+    }
 }
 
-fn parse_file(path: &Path) -> Result<(), std::io::Error> {
+fn parse_file(path: &Path) -> Result<(), String> {
+    let extension = path.extension().unwrap();
+    if extension != "mp3" {
+        return Err("Not an mp3 file".to_string());
+    }
     let tag = Tag::read_from_path(path).unwrap();
     let mut new_path = PathBuf::from(path);
     let song = tag.title().unwrap();
-    let track = tag.track().unwrap();
-    let mut track_number:String = "0".to_owned();
-    track_number.push_str(&track.to_string());
-    let new_filename = track_number + " - " + song;
+    let mut track_number: String = String::from("");
+    let track = tag.track().unwrap().to_string();
+    if !track.starts_with("0") || !track.len() >= 2 {
+        let mut track_number:String = "0".to_owned();
+    }
+    track_number.push_str(&track);
+    let new_filename = track_number + " - " + song + "." + extension.to_str().unwrap();
     new_path.set_file_name(new_filename);
 
     match fs::rename(path, new_path) {
         Ok(_) => (),
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.to_string()),
     }
 
     Ok(())
