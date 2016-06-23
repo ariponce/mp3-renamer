@@ -1,11 +1,13 @@
 extern crate getopts;
 extern crate id3;
+extern crate metaflac;
 extern crate term;
 
 use std::{env, fs};
 use std::path::{Path, PathBuf};
 use getopts::Options;
 use id3::Tag;
+use metaflac::Tag as FlacTag;
 use std::io::prelude::*;
 
 fn main() {
@@ -84,11 +86,16 @@ fn parse_dir(path: &Path, matches: &getopts::Matches) {
 }
 
 fn parse_file(path: &Path) -> Result<(), String> {
-    let extension = path.extension().unwrap();
-    if extension != "mp3" {
-        return Err("Not an mp3 file".to_string());
+    match path.extension().unwrap().to_str().unwrap() {
+        "mp3" => parse_mp3(path),
+        "flac" => parse_flac(path),
+        _ => return Err("Not an mp3 file".to_string())
     }
+}
 
+/// Get ID3 tags from a MP3 file and rename it based on them
+fn parse_mp3(path: &Path) -> Result<(), String> {
+    let extension = path.extension().unwrap();
 	let tag = match Tag::read_from_path(path) {
 		Ok(v) => { v },
 		Err(e) => { return Err(e.to_string()) }
@@ -122,34 +129,98 @@ fn parse_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Get vorbis comments from a FLAC file and rename it based on them
+fn parse_flac(path: &Path) -> Result<(), String> {
+    let extension = path.extension().unwrap();
+	let tag = match FlacTag::read_from_path(path) {
+		Ok(v) => { v },
+		Err(e) => { return Err(e.to_string()) }
+	};
+
+	let tags = tag.vorbis_comments().unwrap();
+
+    let mut new_path = PathBuf::from(path);
+
+    let song = match tags.title() {
+        Some(v) => v[0].as_str(),
+        None => return Err("No title tag found".to_string()),
+    };
+    let mut track_number: String = String::from("");
+
+    let track = match tags.track() {
+        Some(v) => v.to_string(),
+        None => return Err("No track tag found".to_string()),
+    };
+    // Add a leading zero for track between 1-9
+    if track.len() < 2 {
+        track_number = "0".to_owned();
+    }
+    track_number.push_str(&track);
+    let new_filename = track_number + " - " + song + "." + extension.to_str().unwrap();
+    new_path.set_file_name(new_filename);
+
+    match fs::rename(path, new_path) {
+        Ok(_) => (),
+        Err(e) => return Err(e.to_string()),
+    }
+
+    Ok(())
+}
+
 /// TODO: Handle albums with multiple folders
 fn rename_dir(path: &Path) -> Result<PathBuf, String> {
     let mut file = PathBuf::new();
     let mut new_path = PathBuf::from(path);
+    let (year, album): (String, String);
+
     for entry in fs::read_dir(path).unwrap() {
         let path = entry.unwrap().path();
-        if path.is_file() && path.extension().unwrap() == "mp3" {
+        if path.is_file() && (path.extension().unwrap() == "mp3" || path.extension().unwrap() == "flac")  {
             file = path;
             break;
         }
     }
 
-    if file.exists() && file.extension().unwrap() == "mp3" {
-        let tag = match Tag::read_from_path(file) {
-            Ok(v) => { v },
-            Err(e) => { return Err(e.to_string()) }
-        };
+    if file.exists() {
+        match file.extension().unwrap().to_str().unwrap() {
+            "mp3" => {
+                let tag = match Tag::read_from_path(file) {
+                    Ok(v) => { v },
+                    Err(e) => { return Err(e.to_string()) }
+                };
 
-        let year = match tag.year() {
-            Some(v) => v.to_string(),
-            None => return Err("No year tag found".to_string()),
-        };
+                 match tag.year() {
+                    Some(v) => year = v.to_string(),
+                    None => return Err("No year tag found".to_string()),
+                };
 
-        let album = match tag.album() {
-            Some(v) => v,
-            None => return Err("No album tag found".to_string()),
-        };
-        new_path.set_file_name(year + " - " + album);
+                 match tag.album() {
+                    Some(v) => album = v.to_string(),
+                    None => return Err("No album tag found".to_string()),
+                };
+            },
+            "flac" => {
+                let tag = match FlacTag::read_from_path(file) {
+                    Ok(v) => { v },
+                    Err(e) => { return Err(e.to_string()) }
+                };
+
+                let tags = tag.vorbis_comments().unwrap();
+
+                match tags.get("DATE") {
+                    Some(v) => year = v[0].to_string(),
+                    None => return Err("No year tag found".to_string()),
+                };
+
+                match tags.album() {
+                    Some(v) => album =  v[0].to_string(),
+                    None => return Err("No album tag found".to_string()),
+                };
+            },
+            _ => { return Err("Cannot renamed dir".to_string()) }
+        }
+
+        new_path.set_file_name(year + " - " + &album);
 
         match fs::rename(path, &new_path) {
             Ok(_) => () ,
