@@ -1,10 +1,12 @@
 extern crate getopts;
 extern crate id3;
+extern crate term;
 
 use std::{env, fs};
 use std::path::{Path, PathBuf};
 use getopts::Options;
 use id3::Tag;
+use std::io::prelude::*;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -35,29 +37,50 @@ fn main() {
     }
 
     if path.is_dir() {
-        parse_dir(path);
-
-        if matches.opt_present("rename-dir") {
-            rename_dir(path);
-        }
+        parse_dir(path, &matches);
     } else {
         match parse_file(path) {
             Ok(_) => println!("Done"),
             Err(e) => println!("Error: {}", e.to_string()),
         }
     }
-
 }
 
-fn parse_dir(path: &Path) {
-    for entry in fs::read_dir(path).unwrap() {
-        let path = entry.unwrap().path();
-        match parse_file(path.as_path()) {
-            Ok(_) => println!("Processed {:?}", path.file_name().unwrap()),
-            Err(e) => println!("Failed to process {:?}: {}", path.file_name().unwrap(), e)
-        }
+fn parse_dir(path: &Path, matches: &getopts::Matches) {
+    let mut t = term::stdout().unwrap();
+    let mut new_path:PathBuf = path.to_owned();
+
+    if matches.opt_present("rename-dir") {
+        match rename_dir(path) {
+            Ok(v) => {
+                new_path = PathBuf::new();
+                new_path.push(&v);
+            },
+            Err(e) => println!("Failed to rename dir {}", e.to_string()),
+        };
     }
 
+    for entry in fs::read_dir(new_path).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            parse_dir(path.as_path(), &matches);
+        } else {
+            match parse_file(path.as_path()) {
+                Ok(_) => {
+                    t.fg(term::color::GREEN).unwrap();
+                    write!(t, "[OK] ").unwrap();
+                    t.reset().unwrap();
+                    write!(t, "{}\n", path.file_name().unwrap().to_str().unwrap()).unwrap();
+                },
+                Err(e) => {
+                    t.fg(term::color::RED).unwrap();
+                    write!(t, "[Er] ").unwrap();
+                    t.reset().unwrap();
+                    write!(t, "{}: {}\n", path.file_name().unwrap().to_str().unwrap(), e).unwrap();
+                }
+            }
+        }
+    }
 }
 
 fn parse_file(path: &Path) -> Result<(), String> {
@@ -70,10 +93,19 @@ fn parse_file(path: &Path) -> Result<(), String> {
 		Ok(v) => { v },
 		Err(e) => { return Err(e.to_string()) }
 	};
+
     let mut new_path = PathBuf::from(path);
-    let song = tag.title().unwrap();
+
+    let song = match tag.title() {
+        Some(v) => v,
+        None => return Err("No title tag found".to_string()),
+    };
     let mut track_number: String = String::from("");
-    let track = tag.track().unwrap().to_string();
+
+    let track = match tag.track() {
+        Some(v) => v.to_string(),
+        None => return Err("No track tag found".to_string()),
+    };
     // Add a leading zero for track between 1-9
     if track.len() < 2 {
         track_number = "0".to_owned();
@@ -90,22 +122,42 @@ fn parse_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn rename_dir(path: &Path) -> Result<(), String> {
-   let file = fs::read_dir(path).unwrap().next().unwrap().unwrap().path();
-   if file.extension().unwrap() == "mp3" {
-	   let tag = Tag::read_from_path(file).unwrap();
-       let year = tag.year().unwrap().to_string();
-       let album = tag.album().unwrap();
-       let mut new_path = PathBuf::from(path);
-       new_path.set_file_name(year + " - " + album);
+/// TODO: Handle albums with multiple folders
+fn rename_dir(path: &Path) -> Result<PathBuf, String> {
+    let mut file = PathBuf::new();
+    let mut new_path = PathBuf::from(path);
+    for entry in fs::read_dir(path).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() && path.extension().unwrap() == "mp3" {
+            file = path;
+            break;
+        }
+    }
 
-       match fs::rename(path, new_path) {
-           Ok(_) => (),
-           Err(e) => return Err(e.to_string()),
-       }
-   }
+    if file.exists() && file.extension().unwrap() == "mp3" {
+        let tag = match Tag::read_from_path(file) {
+            Ok(v) => { v },
+            Err(e) => { return Err(e.to_string()) }
+        };
 
-   Ok(())
+        let year = match tag.year() {
+            Some(v) => v.to_string(),
+            None => return Err("No year tag found".to_string()),
+        };
+
+        let album = match tag.album() {
+            Some(v) => v,
+            None => return Err("No album tag found".to_string()),
+        };
+        new_path.set_file_name(year + " - " + album);
+
+        match fs::rename(path, &new_path) {
+            Ok(_) => () ,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    Ok(new_path)
 }
 
 fn print_usage(program: &str, opts: Options) {
