@@ -84,10 +84,12 @@ fn parse_dir(path: &Path, matches: &getopts::Matches, needed_tags: &Vec<&str>) {
                     write!(t, "{}\n", path.file_name().unwrap().to_str().unwrap()).unwrap();
                 },
                 Err(e) => {
-                    t.fg(term::color::RED).unwrap();
-                    write!(t, "[Er] ").unwrap();
-                    t.reset().unwrap();
-                    write!(t, "{}: {}\n", path.file_name().unwrap().to_str().unwrap(), e).unwrap();
+                    if e != "Not a music file" {
+                        t.fg(term::color::RED).unwrap();
+                        write!(t, "[Er] ").unwrap();
+                        t.reset().unwrap();
+                        write!(t, "{}: {}\n", path.file_name().unwrap().to_str().unwrap(), e).unwrap();
+                    }
                 }
             }
         }
@@ -98,7 +100,7 @@ fn parse_file(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
     match path.extension().unwrap().to_str().unwrap() {
         "mp3" => parse_mp3(path, needed_tags),
         "flac" => parse_flac(path, needed_tags),
-        _ => return Err("Not an mp3 file".to_string())
+        _ => return Err("Not a music file".to_string())
     }
 }
 
@@ -164,23 +166,61 @@ fn parse_flac(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
 	let tags = tag.vorbis_comments().unwrap();
 
     let mut new_path = PathBuf::from(path);
+    let mut new_filename: String = String::from("");
 
-    let song = match tags.title() {
-        Some(v) => v[0].as_str(),
-        None => return Err("No title tag found".to_string()),
-    };
-    let mut track_number: String = String::from("");
+    for t in needed_tags {
+        match *t {
+            "track" => {
+                let mut track_number: String = String::from("");
 
-    let track = match tags.track() {
-        Some(v) => v.to_string(),
-        None => return Err("No track tag found".to_string()),
-    };
-    // Add a leading zero for track between 1-9
-    if track.len() < 2 {
-        track_number = "0".to_owned();
+                let track = match tags.track() {
+                    Some(v) => v.to_string(),
+                    None => return Err("No track tag found".to_string(),)
+                };
+                // Add a leading zero for track between 1-9
+                if track.len() < 2 {
+                    track_number = "0".to_owned();
+                }
+
+
+                track_number.push_str(&track);
+                new_filename = new_filename + track_number.as_str();
+            },
+            "title" => {
+                let title = match tags.title() {
+                    Some(v) => v[0].as_str(),
+                    None => return Err("No title tag found".to_string()),
+                };
+                new_filename = new_filename + title;
+            },
+            "artist" => {
+                let artist = match tags.artist() {
+                    Some(v) => v[0].as_str(),
+                    None => return Err("No artist tag found".to_string()),
+                };
+                new_filename = new_filename + artist;
+            },
+            "year" => {
+                let year = match tags.get("DATE") {
+                    Some(v) => v[0].as_str(),
+                    None => return Err("No year tag found".to_string()),
+                };
+                new_filename = new_filename + year;
+            },
+            "album" => {
+                let album = match tags.album() {
+                    Some(v) => v[0].as_str(),
+                    None => return Err("No album tag found".to_string()),
+                };
+                new_filename = new_filename + album;
+            },
+			_ => {
+				new_filename = new_filename + " " + t + " ";
+			}
+        }
     }
-    track_number.push_str(&track);
-    let new_filename = track_number + " - " + song + "." + extension.to_str().unwrap();
+
+	new_filename = new_filename + "." + extension.to_str().unwrap();
     new_path.set_file_name(new_filename);
 
     match fs::rename(path, new_path) {
