@@ -131,11 +131,19 @@ fn parse_mp3(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
 				new_filename = new_filename + track_number.as_str();
 			},
 			"title" => {
-				let title = match tag.title() {
-					Some(v) => v,
+				let mut title = match tag.title() {
+                    Some(v) => { v },
 					None => return Err("No title tag found".to_string()),
 				};
-				new_filename = new_filename + title;
+				// Sometimes tiles contains slashes, which cannot be used
+				// on filenames, so we need to replace them
+                if title.contains("/") {
+                    let formatted_title = title.replace('/', "-");
+                    new_filename = new_filename + &formatted_title;
+                } else {
+                    new_filename = new_filename + title;
+                }
+
 			},
 			_ => {
 				new_filename = new_filename + " " + t + " ";
@@ -144,7 +152,6 @@ fn parse_mp3(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
 	}
 
 	new_filename = new_filename + "." + extension.to_str().unwrap();
-  //let new_filename = track_number + " - " + song + "." + extension.to_str().unwrap();
     new_path.set_file_name(new_filename);
 
     match fs::rename(path, new_path) {
@@ -296,7 +303,6 @@ fn rename_dir(path: &Path) -> Result<PathBuf, String> {
 }
 
 fn parse_format(format: &str) -> Vec<&str> {
-	println!("{}", format);
 	let v: Vec<&str> = format.split(' ').collect();
 	let mut result: Vec<&str> = vec!();
 
