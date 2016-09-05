@@ -33,10 +33,11 @@ fn main() {
         return;
     }
 
-	let mut format = String::from("%n - %t");
-	if matches.opt_present("f") {
-		format = matches.opt_str("f").unwrap();
-	}
+    let format = if matches.opt_present("f") {
+        matches.opt_str("f").unwrap()
+    } else {
+        String::from("%n - %t")
+    };
 
     let path = Path::new(&args[1]);
 
@@ -57,7 +58,7 @@ fn main() {
     }
 }
 
-fn parse_dir(path: &Path, matches: &getopts::Matches, needed_tags: &Vec<&str>) {
+fn parse_dir(path: &Path, matches: &getopts::Matches, needed_tags: &[&str]) {
     let mut t = term::stdout().unwrap();
     let mut new_path:PathBuf = path.to_owned();
 
@@ -74,9 +75,9 @@ fn parse_dir(path: &Path, matches: &getopts::Matches, needed_tags: &Vec<&str>) {
     for entry in fs::read_dir(new_path).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
-            parse_dir(path.as_path(), &matches, &needed_tags);
+            parse_dir(path.as_path(), matches, needed_tags);
         } else {
-            match parse_file(path.as_path(), &needed_tags) {
+            match parse_file(path.as_path(), needed_tags) {
                 Ok(_) => {
                     t.fg(term::color::GREEN).unwrap();
                     write!(t, "[OK] ").unwrap();
@@ -96,16 +97,16 @@ fn parse_dir(path: &Path, matches: &getopts::Matches, needed_tags: &Vec<&str>) {
     }
 }
 
-fn parse_file(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
+fn parse_file(path: &Path, needed_tags: &[&str]) -> Result<(), String> {
     match path.extension().unwrap().to_str().unwrap() {
         "mp3" => parse_mp3(path, needed_tags),
         "flac" => parse_flac(path, needed_tags),
-        _ => return Err("Not a music file".to_string())
+        _ => Err("Not a music file".to_string())
     }
 }
 
 /// Get ID3 tags from a MP3 file and rename it based on them
-fn parse_mp3(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
+fn parse_mp3(path: &Path, needed_tags: &[&str]) -> Result<(), String> {
     let extension = path.extension().unwrap();
 	let tag = match Tag::read_from_path(path) {
 		Ok(v) => { v },
@@ -131,19 +132,14 @@ fn parse_mp3(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
 				new_filename = new_filename + track_number.as_str();
 			},
 			"title" => {
-				let mut title = match tag.title() {
+				let title = match tag.title() {
                     Some(v) => { v },
 					None => return Err("No title tag found".to_string()),
 				};
 				// Sometimes tiles contains slashes, which cannot be used
 				// on filenames, so we need to replace them
-                if title.contains("/") {
-                    let formatted_title = title.replace('/', "-");
-                    new_filename = new_filename + &formatted_title;
-                } else {
-                    new_filename = new_filename + title;
-                }
-
+				let formatted_title = format_filename(title);
+                new_filename = new_filename + &formatted_title;
 			},
 			_ => {
 				new_filename = new_filename + " " + t + " ";
@@ -163,7 +159,7 @@ fn parse_mp3(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
 }
 
 /// Get vorbis comments from a FLAC file and rename it based on them
-fn parse_flac(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
+fn parse_flac(path: &Path, needed_tags: &[&str]) -> Result<(), String> {
     let extension = path.extension().unwrap();
 	let tag = match FlacTag::read_from_path(path) {
 		Ok(v) => { v },
@@ -198,7 +194,10 @@ fn parse_flac(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
                     Some(v) => v[0].as_str(),
                     None => return Err("No title tag found".to_string()),
                 };
-                new_filename = new_filename + title;
+				// Sometimes tiles contains slashes, which cannot be used
+				// on filenames, so we need to replace them
+				let formatted_title = format_filename(title);
+                new_filename = new_filename + &formatted_title;
             },
             "artist" => {
                 let artist = match tags.artist() {
@@ -236,6 +235,15 @@ fn parse_flac(path: &Path, needed_tags: &Vec<&str>) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+// Removes slashes from filenames
+fn format_filename(title: &str) -> String {
+    if title.contains('/') {
+        return title.replace('/', "-");
+    }
+
+    String::from(title)
 }
 
 /// TODO: Handle albums with multiple folders
@@ -291,11 +299,16 @@ fn rename_dir(path: &Path) -> Result<PathBuf, String> {
             _ => { return Err("Cannot renamed dir".to_string()) }
         }
 
+        let album = format_filename(&album);
         new_path.set_file_name(year + " - " + &album);
 
-        match fs::rename(path, &new_path) {
-            Ok(_) => () ,
-            Err(e) => return Err(e.to_string()),
+        if path != new_path.as_path() {
+            println!("RENAME DIR");
+            println!("{:?}, {:?} ", path, new_path.as_path());
+            match fs::rename(path, &new_path) {
+                Ok(_) => () ,
+                Err(e) => return Err(e.to_string()),
+            }
         }
     }
 
@@ -306,18 +319,18 @@ fn parse_format(format: &str) -> Vec<&str> {
 	let v: Vec<&str> = format.split(' ').collect();
 	let mut result: Vec<&str> = vec!();
 
-	for arg in v.iter() {
+	for arg in &v {
 		if arg.is_empty() {
 			continue;
-		} else if arg.ends_with("n") {
+		} else if arg.ends_with('n') {
 			result.push("track");
-		} else if arg.ends_with("t") {
+		} else if arg.ends_with('t') {
 			result.push("title");
-		} else if arg.ends_with("a") {
+		} else if arg.ends_with('a') {
 			result.push("artist");
-		} else if arg.ends_with("y") {
+		} else if arg.ends_with('y') {
 			result.push("year");
-		} else if arg.ends_with("b") {
+		} else if arg.ends_with('b') {
 			result.push("album");
 		} else {
 			result.push(arg);
